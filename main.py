@@ -2,9 +2,14 @@ import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv # Import para carregar o .env
 
 # Importa os roteadores (seus módulos)
 from routers import rag, state, graph
+# Carrega as variáveis de ambiente do arquivo .env
+# [2025-08-01] Sempre coloque os imports no topo do script.
+load_dotenv() 
+
 
 # --- Gerenciador de Ciclo de Vida (Substitui on_event) ---
 @asynccontextmanager
@@ -35,7 +40,7 @@ async def lifespan(app: FastAPI):
 # Passamos a função 'lifespan' aqui na criação do app
 app = FastAPI(
     title="Cronos Super Server", 
-    version="3.1.0",
+    version="3.1.1 - Adicionado dotenv para carregar as variáveis de ambiente.",
     lifespan=lifespan
 )
 

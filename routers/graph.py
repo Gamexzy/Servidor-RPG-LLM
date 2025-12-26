@@ -8,9 +8,9 @@ router = APIRouter(prefix="/graph", tags=["graph"])
 
 # --- Configuração ---
 # Lê do ambiente ou usa padrão
-URI = os.getenv("NEO4J_URI", "neo4j://localhost:7687")
-USER = os.getenv("NEO4J_USER", "neo4j")
-PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
+URI = os.getenv("NEO4J_URI")
+USER = os.getenv("NEO4J_USER")
+PASSWORD = os.getenv("NEO4J_PASSWORD")
 
 driver = None
 

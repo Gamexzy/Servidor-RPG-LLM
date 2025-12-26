@@ -1,7 +1,14 @@
+# Arquivos do projeto
 chroma_db
+world_state.db
+
+# Python
 __pycache__/
 *.pyc
+
+# Configurações/Secrets
 .env
 .vscode/
-requirements.txt
 
+# Dependências (Se não precisar commitar, mas você já está ignorando no arquivo atual)
+requirements.txt
