@@ -1,22 +1,26 @@
 import os
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from neo4j import GraphDatabase
 
-router = APIRouter(prefix="/graph", tags=["graph"])
+# [2025-08-01] Sempre coloque os imports no topo do script.
+
+# Alterado para atender o path /query/graph do frontend
+router = APIRouter(prefix="/query", tags=["graph"])
 
 # --- Configuração ---
-# Lê do ambiente ou usa padrão
-URI = os.getenv("NEO4J_URI")
-USER = os.getenv("NEO4J_USER")
-PASSWORD = os.getenv("NEO4J_PASSWORD")
+URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+USER = os.getenv("NEO4J_USER", "neo4j")
+PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
 
 driver = None
 
-class GraphQuery(BaseModel):
-    cypher: str
-    params: Dict[str, Any] = {}
+class GraphEntityQuery(BaseModel):
+    entity: str
+    universeId: str
+    userId: str
+    depth: int = 1
 
 def init_graph_module():
     global driver
@@ -32,17 +36,77 @@ def close_graph_module():
     if driver:
         driver.close()
 
-@router.post("/query")
-async def run_cypher(req: GraphQuery):
+# --- Funções Internas ---
+
+async def internal_ingest_edges(edges: List[Dict[str, Any]], universe_id: str, user_id: str):
     if not driver:
-        raise HTTPException(503, "Banco de Grafos desconectado.")
+        return
+    
+    # Prepara os dados: garante que 'properties' seja um dict válido para o APOC não falhar
+    prepared_edges = []
+    for edge in edges:
+        e_copy = edge.copy()
+        if "properties" not in e_copy or e_copy["properties"] is None:
+            e_copy["properties"] = {}
+        prepared_edges.append(e_copy)
+
+    # Query Cypher otimizada para Merge (Upsert) em lote
+    # Requer plugin APOC instalado no Neo4j (apoc.create.relationship)
+    cypher = """
+    UNWIND $edges AS edge
+    MERGE (s:Entity {name: edge.subject, universeId: $universeId, userId: $userId})
+    MERGE (o:Entity {name: edge.object, universeId: $universeId, userId: $userId})
+    WITH s, o, edge
+    CALL apoc.create.relationship(s, edge.relation, edge.properties, o) YIELD rel
+    RETURN count(rel) as rel_count
+    """
     
     try:
-        # Executa query e retorna lista de dicionários
-        records, summary = driver.execute_query(req.cypher, req.params, database_="neo4j")
-        results = [dict(record) for record in records]
-        print(f"🕸️ [GRAPH] Query executada: {len(results)} registros.")
-        return {"results": results}
+        with driver.session() as session:
+            result = session.run(cypher, {
+                "edges": prepared_edges,
+                "universeId": universe_id,
+                "userId": user_id
+            })
+            summary = result.single()
+            count = summary["rel_count"] if summary else 0
+            print(f"🕸️ [GRAPH] {count} arestas processadas (Lote otimizado).")
+            
+    except Exception as e:
+        print(f"❌ [GRAPH] Erro ao ingerir arestas (Verifique se o APOC está instalado): {e}")
+
+# --- Rotas ---
+
+@router.post("/graph")
+async def query_graph_context(req: GraphEntityQuery):
+    if not driver:
+        return {"edges": []}
+    
+    # Busca nós conectados à entidade especificada
+    cypher = """
+    MATCH (n:Entity {name: $entity, universeId: $universeId, userId: $userId})-[r]-(m:Entity)
+    RETURN n.name as subject, type(r) as relation, m.name as object, properties(r) as props
+    LIMIT 50
+    """
+    
+    try:
+        records, summary = driver.execute_query(
+            cypher, 
+            {"entity": req.entity, "universeId": req.universeId, "userId": req.userId}, 
+            database_="neo4j"
+        )
+        
+        results = []
+        for record in records:
+            results.append({
+                "subject": record["subject"],
+                "relation": record["relation"],
+                "object": record["object"],
+                "properties": record["props"]
+            })
+            
+        print(f"🕸️ [GRAPH] Busca '{req.entity}' -> {len(results)} conexões.")
+        return {"edges": results}
     except Exception as e:
         print(f"❌ [GRAPH] Erro Cypher: {e}")
-        raise HTTPException(500, str(e))
+        return {"edges": []}

@@ -1,7 +1,10 @@
 import sqlite3
+import json
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Any
+
+# [2025-08-01] Sempre coloque os imports no topo do script.
 
 router = APIRouter(prefix="/state", tags=["state"])
 
@@ -18,7 +21,8 @@ def init_state_module():
     print("📊 [STATE] Verificando banco de dados SQLite...")
     conn = sqlite3.connect(SQLITE_PATH)
     cursor = conn.cursor()
-    # Cria tabela de exemplo (Player) se não existir
+    
+    # Tabela de Player (Legado/Simples)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS player (
             id TEXT PRIMARY KEY, 
@@ -28,9 +32,40 @@ def init_state_module():
             inventory TEXT
         )
     ''')
+    
+    # Tabela de Logs de Turnos (Novo)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS turn_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT,
+            universe_id TEXT,
+            turn_id INTEGER,
+            data_json TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
     conn.commit()
     conn.close()
     print("✅ [STATE] SQLite pronto.")
+
+# --- Funções Internas ---
+
+async def internal_log_turn(user_id: str, universe_id: str, turn_id: int, data: Dict[str, Any]):
+    conn = sqlite3.connect(SQLITE_PATH)
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO turn_logs (user_id, universe_id, turn_id, data_json) VALUES (?, ?, ?, ?)",
+            (user_id, universe_id, turn_id, json.dumps(data))
+        )
+        conn.commit()
+        print(f"📊 [STATE] Log do turno {turn_id} salvo.")
+    except Exception as e:
+        print(f"❌ [STATE] Erro ao salvar log: {e}")
+        raise e
+    finally:
+        conn.close()
 
 # --- Rotas ---
 
@@ -53,7 +88,6 @@ async def update_state(req: StateUpdate):
     cursor = conn.cursor()
     
     try:
-        # Tenta UPDATE
         cols_set = ", ".join([f"{k} = ?" for k in req.data.keys()])
         values = list(req.data.values())
         values.append(req.condition_id)
@@ -61,9 +95,7 @@ async def update_state(req: StateUpdate):
         sql_update = f"UPDATE {req.table} SET {cols_set} WHERE id = ?"
         cursor.execute(sql_update, values)
         
-        # Se nada mudou, faz INSERT
         if cursor.rowcount == 0:
-            # Prepara dados para insert (incluindo o ID da condição)
             insert_data = req.data.copy()
             if 'id' not in insert_data:
                 insert_data['id'] = req.condition_id

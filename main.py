@@ -2,49 +2,42 @@ import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv # Import para carregar o .env
+from dotenv import load_dotenv
 
-# Importa os roteadores (seus módulos)
-from routers import rag, state, graph
-# Carrega as variáveis de ambiente do arquivo .env
+# Importa os roteadores
+from routers import rag, state, graph, auth, library, ingest
+
 # [2025-08-01] Sempre coloque os imports no topo do script.
 load_dotenv() 
 
-
-# --- Gerenciador de Ciclo de Vida (Substitui on_event) ---
+# --- Gerenciador de Ciclo de Vida ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # --- STARTUP (Executado ao ligar) ---
+    # --- STARTUP ---
     print("🚀 INICIANDO SISTEMA CRONOS (Modo Lifespan)...")
     
     # Inicializa cada módulo
-    # RAG: Carrega modelo na GPU
     rag.init_rag_module()
-    
-    # State: Verifica tabelas SQLite
     state.init_state_module()
-    
-    # Graph: Conecta ao Neo4j
     graph.init_graph_module()
+    library.init_library_module() # Novo módulo
     
     print("🌟 SISTEMA PRONTO E ONLINE NA PORTA 8000!")
     
-    yield  # O servidor roda aqui enquanto estiver ligado
+    yield
     
-    # --- SHUTDOWN (Executado ao desligar) ---
+    # --- SHUTDOWN ---
     print("🛑 Desligando sistemas...")
     graph.close_graph_module()
     print("✅ Sistemas desligados com segurança.")
 
 # --- Configuração da App ---
-# Passamos a função 'lifespan' aqui na criação do app
 app = FastAPI(
     title="Cronos Super Server", 
-    version="3.1.1 - Adicionado dotenv para carregar as variáveis de ambiente.",
+    version="3.2.0 - Adicionado suporte a Auth, Library e Ingestão Unificada.",
     lifespan=lifespan
 )
 
-# Configuração de CORS (Permite acesso do React/Ngrok)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -54,10 +47,12 @@ app.add_middleware(
 )
 
 # Registra as rotas
-app.include_router(rag.router)
-app.include_router(state.router)
-app.include_router(graph.router)
+app.include_router(auth.router)     # /auth
+app.include_router(library.router)  # /library
+app.include_router(ingest.router)   # /ingest
+app.include_router(rag.router)      # /query (Vector)
+app.include_router(graph.router)    # /query (Graph)
+app.include_router(state.router)    # /state (Legacy/Debug)
 
 if __name__ == "__main__":
-    # Roda o servidor
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -3,11 +3,13 @@ import chromadb
 import torch
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Dict, Any
+from typing import Dict, Any, List
+
+# [2025-08-01] Sempre coloque os imports no topo do script.
 from sentence_transformers import SentenceTransformer
 
-# Cria o "Roteador" (como se fosse um mini-app)
-router = APIRouter(prefix="/rag", tags=["rag"])
+# Alterado para atender o path /query/vector do frontend
+router = APIRouter(prefix="/query", tags=["rag"])
 
 # --- Configurações ---
 MODEL_NAME = "intfloat/multilingual-e5-large"
@@ -19,32 +21,28 @@ chroma_client = None
 collection = None
 
 # --- Models ---
-class RagIngest(BaseModel):
-    text: str
-    metadata: Dict[str, Any]
-
-class RagQuery(BaseModel):
+class VectorQuery(BaseModel):
     query: str
-    n_results: int = 3
+    universeId: str
+    userId: str
+    n_results: int = 5
 
-# --- Inicialização (Chamada pelo main.py) ---
+# --- Inicialização ---
 def init_rag_module():
     global embedding_model, chroma_client, collection
     print("🧠 [RAG] Inicializando módulo de memória...")
     
-    # 1. GPU Setup
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"🔧 [RAG] Hardware: {device.upper()}")
     
-    # 2. Carregar Modelo
     try:
         embedding_model = SentenceTransformer(MODEL_NAME, device=device)
         print("✅ [RAG] Modelo carregado.")
     except Exception as e:
         print(f"❌ [RAG] Falha ao carregar modelo: {e}")
+        # Em produção, não quebre se não tiver GPU, use um modelo menor ou CPU
         raise e
 
-    # 3. ChromaDB
     chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
     collection = chroma_client.get_or_create_collection(
         name="cronos_memory", 
@@ -52,39 +50,50 @@ def init_rag_module():
     )
     print("✅ [RAG] Banco Vetorial pronto.")
 
-# --- Rotas ---
+# --- Funções Internas (Usadas pelo Ingest Router) ---
 
-@router.post("/ingest")
-async def ingest_memory(req: RagIngest):
-    try:
-        doc_id = str(uuid.uuid4())
-        # O modelo e5 exige prefixo 'passage:'
-        emb = embedding_model.encode(f"passage: {req.text}").tolist()
+async def internal_ingest_text(text: str, metadata: Dict[str, Any]):
+    if not collection:
+        raise Exception("ChromaDB não inicializado.")
         
-        collection.add(
-            ids=[doc_id],
-            embeddings=[emb],
-            documents=[req.text],
-            metadatas=[req.metadata]
-        )
-        print(f"🧠 [RAG] Ingestão: {req.text[:30]}...")
-        return {"status": "success", "id": doc_id}
-    except Exception as e:
-        raise HTTPException(500, str(e))
+    doc_id = str(uuid.uuid4())
+    # O modelo e5 exige prefixo 'passage:' para documentos
+    emb = embedding_model.encode(f"passage: {text}").tolist()
+    
+    collection.add(
+        ids=[doc_id],
+        embeddings=[emb],
+        documents=[text],
+        metadatas=[metadata]
+    )
+    print(f"🧠 [RAG] Memória salva: {text[:40]}...")
 
-@router.post("/query")
-async def query_memory(req: RagQuery):
+# --- Rotas Públicas ---
+
+@router.post("/vector")
+async def query_vector(req: VectorQuery):
     try:
-        # O modelo e5 exige prefixo 'query:'
+        # O modelo e5 exige prefixo 'query:' para buscas
         emb = embedding_model.encode(f"query: {req.query}").tolist()
+        
+        # Filtro de metadados: Apenas memórias deste Usuário E deste Universo
+        where_filter = {
+            "$and": [
+                {"userId": req.userId},
+                {"universeId": req.universeId}
+            ]
+        }
         
         res = collection.query(
             query_embeddings=[emb], 
-            n_results=req.n_results
+            n_results=req.n_results,
+            where=where_filter
         )
         
         docs = res['documents'][0] if res['documents'] else []
-        print(f"🔍 [RAG] Busca por '{req.query}' -> {len(docs)} resultados.")
+        print(f"🔍 [RAG] Busca '{req.query}' (U:{req.universeId}) -> {len(docs)} res.")
         return {"documents": docs}
     except Exception as e:
-        raise HTTPException(500, str(e))
+        print(f"❌ [RAG] Erro na busca: {e}")
+        # Retorna lista vazia para não quebrar o jogo
+        return {"documents": []}
