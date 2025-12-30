@@ -1,6 +1,7 @@
 # Arquivos do projeto
 chroma_db
 world_state.db
+user_library.db
 
 # Python
 __pycache__/
