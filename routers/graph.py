@@ -1,7 +1,7 @@
 import os
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from neo4j import GraphDatabase
 
 # [2025-08-01] Sempre coloque os imports no topo do script.
@@ -10,6 +10,8 @@ from neo4j import GraphDatabase
 router = APIRouter(prefix="/query", tags=["graph"])
 
 # --- Configuração ---
+# A leitura do os.getenv acontece no momento do import.
+# Por isso o load_dotenv() deve ocorrer antes do import deste arquivo no main.py.
 URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 USER = os.getenv("NEO4J_USER", "neo4j")
 PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
@@ -25,6 +27,11 @@ class GraphEntityQuery(BaseModel):
 def init_graph_module():
     global driver
     print("🕸️ [GRAPH] Conectando ao Neo4j...")
+    
+    # [DEBUG] Mostra quais credenciais estão sendo usadas de fato
+    # (Útil para confirmar se o .env foi carregado corretamente)
+    print(f"🕸️ [GRAPH] Configuração -> URI: '{URI}' | User: '{USER}'")
+
     try:
         driver = GraphDatabase.driver(URI, auth=(USER, PASSWORD))
         driver.verify_connectivity()

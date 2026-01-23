@@ -4,11 +4,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-# Importa os roteadores
-from routers import rag, state, graph, auth, library, ingest
-
 # [2025-08-01] Sempre coloque os imports no topo do script.
 load_dotenv() 
+
+# Importa os roteadores
+from routers import rag, state, graph, auth, library, ingest  # noqa: E402
+
+
 
 # --- Gerenciador de Ciclo de Vida ---
 @asynccontextmanager
