@@ -1,8 +1,9 @@
+# [2025-08-01] Sempre coloque os imports no topo do script.
 import logging
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
-from routers.graph import driver
+from routers import graph # Importa o módulo para acesso dinâmico ao driver
 
 # Configuração de Logs
 logging.basicConfig(level=logging.INFO)
@@ -10,8 +11,7 @@ logger = logging.getLogger("library")
 
 router = APIRouter(prefix="/library", tags=["library"])
 
-# --- Models (Compatíveis com o Frontend React) ---
-# Usamos camelCase aqui para facilitar o match com o JSON do JavaScript
+# --- Models (Atualizados para Arquitetura de 3 Pilares) ---
 
 class UniverseModel(BaseModel):
     id: str
@@ -25,7 +25,7 @@ class UniverseModel(BaseModel):
 class CharacterModel(BaseModel):
     id: str
     userId: str
-    universeId: str
+    # universeId removido: O personagem agora é um Template Global
     name: str
     description: Optional[str] = ""
     archetype: Optional[str] = ""
@@ -36,7 +36,8 @@ class CharacterModel(BaseModel):
 class AdventureModel(BaseModel):
     id: str
     userId: str
-    universeId: str
+    universeId: str # Onde a aventura acontece
+    characterId: str # Qual template de personagem está sendo usado
     name: str
     description: Optional[str] = ""
     currentStep: Optional[str] = ""
@@ -44,14 +45,14 @@ class AdventureModel(BaseModel):
     messages: Optional[List[Any]] = [] 
 
 def init_library_module():
-    logger.info("📚 [LIBRARY] Módulo de Biblioteca inicializado.")
+    logger.info("📚 [LIBRARY] Módulo de Biblioteca inicializado (v3 - 3 Pilares).")
 
 # --- Rotas de Leitura (GET) ---
 
 @router.get("/{user_id}")
 async def get_user_library(user_id: str):
-    """Retorna todos os universos, personagens e aventuras do usuário."""
-    if not driver:
+    """Retorna todos os universos, personagens (templates) e aventuras do usuário."""
+    if not graph.driver:
         raise HTTPException(status_code=503, detail="Database not connected")
     
     try:
@@ -61,12 +62,12 @@ async def get_user_library(user_id: str):
             "adventures": []
         }
         
-        with driver.session() as session:
+        with graph.driver.session() as session:
             # 1. Busca Universos
             result_uni = session.run("MATCH (u:Universe {userId: $userId}) RETURN u", userId=user_id)
             data["universes"] = [dict(record["u"]) for record in result_uni]
             
-            # 2. Busca Personagens
+            # 2. Busca Personagens (Agora são globais/templates)
             result_char = session.run("MATCH (c:Character {userId: $userId}) RETURN c", userId=user_id)
             data["characters"] = [dict(record["c"]) for record in result_char]
 
@@ -84,7 +85,7 @@ async def get_user_library(user_id: str):
 
 @router.post("/universe")
 async def save_universe(item: UniverseModel):
-    if not driver: raise HTTPException(status_code=503, detail="Database not connected")
+    if not graph.driver: raise HTTPException(status_code=503, detail="Database not connected")
     
     cypher = """
     MERGE (u:Universe {id: $id})
@@ -97,7 +98,7 @@ async def save_universe(item: UniverseModel):
     RETURN u.id
     """
     try:
-        with driver.session() as session:
+        with graph.driver.session() as session:
             session.run(cypher, item.dict())
         return {"status": "success", "id": item.id}
     except Exception as e:
@@ -106,12 +107,12 @@ async def save_universe(item: UniverseModel):
 
 @router.post("/character")
 async def save_character(item: CharacterModel):
-    if not driver: raise HTTPException(status_code=503, detail="Database not connected")
+    if not graph.driver: raise HTTPException(status_code=503, detail="Database not connected")
     
+    # Atualizado: Cria personagem sem vínculo com universo (Template)
     cypher = """
     MERGE (c:Character {id: $id})
     SET c.userId = $userId,
-        c.universeId = $universeId,
         c.name = $name,
         c.description = $description,
         c.archetype = $archetype,
@@ -121,7 +122,7 @@ async def save_character(item: CharacterModel):
     RETURN c.id
     """
     try:
-        with driver.session() as session:
+        with graph.driver.session() as session:
             session.run(cypher, item.dict())
         return {"status": "success", "id": item.id}
     except Exception as e:
@@ -130,62 +131,54 @@ async def save_character(item: CharacterModel):
 
 @router.post("/adventure")
 async def save_adventure(item: AdventureModel):
-    if not driver: raise HTTPException(status_code=503, detail="Database not connected")
+    if not graph.driver: raise HTTPException(status_code=503, detail="Database not connected")
     
-    # Nota: Não salvamos 'messages' aqui por enquanto para não pesar o nó
+    # Atualizado: A Aventura agora é o nó que conecta o Personagem ao Universo
     cypher = """
     MERGE (a:Adventure {id: $id})
     SET a.userId = $userId,
-        a.universeId = $universeId,
         a.name = $name,
         a.description = $description,
         a.currentStep = $currentStep,
-        a.createdAt = $createdAt
+        a.createdAt = $createdAt,
+        a.universeId = $universeId,
+        a.characterId = $characterId
+    
+    WITH a
+    MATCH (u:Universe {id: $universeId})
+    MATCH (c:Character {id: $characterId})
+    
+    MERGE (a)-[:HAPPENS_IN]->(u)
+    MERGE (a)-[:USES_TEMPLATE]->(c)
+    
     RETURN a.id
     """
     try:
-        with driver.session() as session:
+        with graph.driver.session() as session:
+            # exclude={"messages"} pois mensagens não vão pro grafo dessa forma
             session.run(cypher, item.dict(exclude={"messages"}))
         return {"status": "success", "id": item.id}
     except Exception as e:
         logger.error(f"Erro ao salvar aventura: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- Rotas de Deleção (DELETE) - [ATUALIZADO] ---
+# --- Rotas de Deleção (DELETE) ---
 
 @router.delete("/universe/{item_id}")
 async def delete_universe(item_id: str, userId: str = Query(...)):
-    """
-    Deleta um universo e suas aventuras, mas PRESERVA os personagens (apenas desvincula).
-    """
-    if not driver: raise HTTPException(status_code=503, detail="Database not connected")
-
-    # Atualizado [2025-08-01]:
-    # 1. MATCH Universe: Alvo principal.
-    # 2. OPTIONAL MATCH Character: Remove a propriedade 'universeId' para desvincular.
-    # 3. OPTIONAL MATCH Adventure: Marca para deleção.
-    # 4. DETACH DELETE: Apaga Universo e Aventuras, mas não os Personagens.
+    if not graph.driver: raise HTTPException(status_code=503, detail="Database not connected")
     
+    # Deleta universo e suas aventuras, mas PRESERVA os personagens (templates)
     cypher = """
     MATCH (u:Universe {id: $id, userId: $userId})
-    
-    // 1. Desvincular Personagens (Remove universeId, mantém o nó)
-    OPTIONAL MATCH (c:Character {universeId: $id, userId: $userId})
-    REMOVE c.universeId
-    
-    // 2. Coletar Aventuras para Deletar (junto com o Universo)
-    WITH u
     OPTIONAL MATCH (a:Adventure {universeId: $id, userId: $userId})
-    
-    // 3. Deletar Universo e Aventuras
     DETACH DELETE u, a
     """
     try:
-        with driver.session() as session:
+        with graph.driver.session() as session:
             result = session.run(cypher, id=item_id, userId=userId)
-            info = result.consume()
-            logger.info(f"Universo {item_id} processado. Nós deletados: {info.counters.nodes_deleted}")
-                
+            result.consume()
+            logger.info(f"Universo {item_id} deletado.")
         return {"status": "deleted", "id": item_id}
     except Exception as e:
         logger.error(f"Erro ao deletar universo: {e}")
@@ -193,14 +186,15 @@ async def delete_universe(item_id: str, userId: str = Query(...)):
 
 @router.delete("/character/{item_id}")
 async def delete_character(item_id: str, userId: str = Query(...)):
-    if not driver: raise HTTPException(status_code=503, detail="Database not connected")
+    if not graph.driver: raise HTTPException(status_code=503, detail="Database not connected")
 
+    # Deleta o template. (Futuramente: avisar se há aventuras ativas usando ele)
     cypher = """
     MATCH (c:Character {id: $id, userId: $userId})
     DETACH DELETE c
     """
     try:
-        with driver.session() as session:
+        with graph.driver.session() as session:
             session.run(cypher, id=item_id, userId=userId)
         return {"status": "deleted", "id": item_id}
     except Exception as e:
@@ -209,14 +203,14 @@ async def delete_character(item_id: str, userId: str = Query(...)):
 
 @router.delete("/adventure/{item_id}")
 async def delete_adventure(item_id: str, userId: str = Query(...)):
-    if not driver: raise HTTPException(status_code=503, detail="Database not connected")
+    if not graph.driver: raise HTTPException(status_code=503, detail="Database not connected")
 
     cypher = """
     MATCH (a:Adventure {id: $id, userId: $userId})
     DETACH DELETE a
     """
     try:
-        with driver.session() as session:
+        with graph.driver.session() as session:
             session.run(cypher, id=item_id, userId=userId)
         return {"status": "deleted", "id": item_id}
     except Exception as e:

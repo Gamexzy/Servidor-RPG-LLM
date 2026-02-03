@@ -1,10 +1,9 @@
+# [2025-08-01] Sempre coloque os imports no topo do script.
 import logging
 import uuid
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from routers.graph import driver
-
-# [2025-08-01] Sempre coloque os imports no topo do script.
+from routers import graph # Importa o módulo, não a variável direta
 
 # Configuração de Logs
 logging.basicConfig(level=logging.INFO)
@@ -19,7 +18,8 @@ class AuthRequest(BaseModel):
 
 @router.post("/login")
 async def login(req: AuthRequest):
-    if not driver:
+    # Acessa graph.driver dinamicamente
+    if not graph.driver:
         raise HTTPException(status_code=503, detail="Database not connected")
 
     print(f"🔑 [AUTH] Login solicitado: {req.username}")
@@ -31,7 +31,7 @@ async def login(req: AuthRequest):
     """
     
     try:
-        with driver.session() as session:
+        with graph.driver.session() as session:
             result = session.run(cypher, username=req.username)
             record = result.single()
             
@@ -39,7 +39,6 @@ async def login(req: AuthRequest):
                 raise HTTPException(status_code=401, detail="Usuário não encontrado")
             
             # Verificação de senha
-            # OBS: Para produção, use hash (bcrypt/argon2) em vez de texto puro
             stored_password = record["password"]
             if stored_password != req.password:
                 raise HTTPException(status_code=401, detail="Senha incorreta")
@@ -48,20 +47,19 @@ async def login(req: AuthRequest):
             logger.info(f"Usuário logado: {req.username}")
             return {
                 "userId": record["userId"],
-                "token": f"mock-jwt-token-{record['userId']}", # Placeholder para JWT futuro
+                "token": f"mock-jwt-token-{record['userId']}",
                 "username": record["username"]
             }
             
     except Exception as e:
         logger.error(f"Erro no login: {e}")
-        # Se já for HTTPException, relança
         if isinstance(e, HTTPException):
             raise e
         raise HTTPException(status_code=500, detail="Erro interno no servidor")
 
 @router.post("/register")
 async def register(req: AuthRequest):
-    if not driver:
+    if not graph.driver:
         raise HTTPException(status_code=503, detail="Database not connected")
 
     print(f"📝 [AUTH] Registro solicitado: {req.username}")
@@ -83,7 +81,7 @@ async def register(req: AuthRequest):
     """
     
     try:
-        with driver.session() as session:
+        with graph.driver.session() as session:
             # 1. Verifica se usuário já existe
             if session.run(check_cypher, username=req.username).single():
                 raise HTTPException(status_code=400, detail="Nome de usuário já existe")
@@ -92,7 +90,7 @@ async def register(req: AuthRequest):
             session.run(create_cypher, {
                 "userId": new_user_id,
                 "username": req.username,
-                "password": req.password, # Armazenando simples por enquanto (protótipo)
+                "password": req.password,
                 "email": req.email or ""
             })
             

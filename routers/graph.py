@@ -12,9 +12,9 @@ router = APIRouter(prefix="/query", tags=["graph"])
 # --- Configuração ---
 # A leitura do os.getenv acontece no momento do import.
 # Por isso o load_dotenv() deve ocorrer antes do import deste arquivo no main.py.
-URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
-USER = os.getenv("NEO4J_USER", "neo4j")
-PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
+URI = os.getenv("NEO4J_URI")
+USER = os.getenv("NEO4J_USER")
+PASSWORD = os.getenv("NEO4J_PASSWORD")
 
 driver = None
 

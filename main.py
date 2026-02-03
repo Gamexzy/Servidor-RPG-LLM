@@ -1,16 +1,16 @@
+# [2025-08-01] Sempre coloque os imports no topo do script.
 import uvicorn
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-# [2025-08-01] Sempre coloque os imports no topo do script.
+# Carrega variáveis de ambiente antes de importar os roteadores
 load_dotenv() 
 
 # Importa os roteadores
 from routers import rag, state, graph, auth, library, ingest  # noqa: E402
-
-
 
 # --- Gerenciador de Ciclo de Vida ---
 @asynccontextmanager
@@ -22,7 +22,7 @@ async def lifespan(app: FastAPI):
     rag.init_rag_module()
     state.init_state_module()
     graph.init_graph_module()
-    library.init_library_module() # Novo módulo
+    library.init_library_module()
     
     print("🌟 SISTEMA PRONTO E ONLINE NA PORTA 8000!")
     
@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
 # --- Configuração da App ---
 app = FastAPI(
     title="Cronos Super Server", 
-    version="3.2.0 - Adicionado suporte a Auth, Library e Ingestão Unificada.",
+    version="3.3.0 - Fix de Imports e Conexão Neo4j",
     lifespan=lifespan
 )
 
