@@ -1,5 +1,6 @@
 # [2025-08-01] Sempre coloque os imports no topo do script.
 import logging
+import json
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
@@ -21,17 +22,29 @@ class UniverseModel(BaseModel):
     genre: Optional[str] = ""
     image: Optional[str] = ""
     createdAt: Optional[str] = ""
+    # Novos campos (Frontend v3)
+    physics: Optional[List[str]] = []
+    knownTruths: Optional[List[str]] = []
+    chronicles: Optional[List[Any]] = []
+    champions: Optional[List[Any]] = []
+    worlds: Optional[List[Any]] = []
+    structure: Optional[str] = "singular_world"
+    navigationMethod: Optional[str] = "physical"
+    magicSystem: Optional[str] = ""
+    cosmology: Optional[str] = ""
+    graphContext: Optional[List[Dict[str, Any]]] = []
 
 class CharacterModel(BaseModel):
     id: str
     userId: str
-    # universeId removido: O personagem agora é um Template Global
     name: str
     description: Optional[str] = ""
     archetype: Optional[str] = ""
     image: Optional[str] = ""
     stats: Optional[Dict[str, Any]] = {}
+    adventuresPlayed: Optional[int] = 0
     createdAt: Optional[str] = ""
+    graphContext: Optional[List[Dict[str, Any]]] = []
 
 class AdventureModel(BaseModel):
     id: str
@@ -42,10 +55,37 @@ class AdventureModel(BaseModel):
     description: Optional[str] = ""
     currentStep: Optional[str] = ""
     createdAt: Optional[str] = ""
+    # Novos campos de metadados
+    characterName: Optional[str] = ""
+    universeName: Optional[str] = ""
+    universeGenre: Optional[str] = ""
+    lastLocation: Optional[str] = ""
+    startDate: Optional[str] = ""
     messages: Optional[List[Any]] = [] 
+    graphContext: Optional[List[Dict[str, Any]]] = []
 
 def init_library_module():
     logger.info("📚 [LIBRARY] Módulo de Biblioteca inicializado (v3 - 3 Pilares).")
+
+# --- Helpers ---
+
+async def process_graph_context(context: List[Dict], universe_id: str, user_id: str):
+    """Transforma o contexto do frontend (source/target) para o formato do graph ingest (subject/object)."""
+    if not context or not graph.driver:
+        return
+    
+    edges = []
+    for item in context:
+        # Mapeia source->subject, target->object
+        edges.append({
+            "subject": item.get("source"),
+            "relation": item.get("relation"),
+            "object": item.get("target"),
+            "properties": {}
+        })
+    
+    # Chama o ingestor interno do módulo graph
+    await graph.internal_ingest_edges(edges, universe_id, user_id)
 
 # --- Rotas de Leitura (GET) ---
 
@@ -85,7 +125,8 @@ async def get_user_library(user_id: str):
 
 @router.post("/universe")
 async def save_universe(item: UniverseModel):
-    if not graph.driver: raise HTTPException(status_code=503, detail="Database not connected")
+    if not graph.driver:
+        raise HTTPException(status_code=503, detail="Database not connected")
     
     cypher = """
     MATCH (user:User {userId: $userId})
@@ -94,14 +135,34 @@ async def save_universe(item: UniverseModel):
         u.description = $description,
         u.genre = $genre,
         u.image = $image,
-        u.createdAt = $createdAt
+        u.createdAt = $createdAt,
+        u.physics = $physics,
+        u.knownTruths = $knownTruths,
+        u.structure = $structure,
+        u.navigationMethod = $navigationMethod,
+        u.magicSystem = $magicSystem,
+        u.cosmology = $cosmology,
+        u.chronicles = $chroniclesStr,
+        u.champions = $championsStr,
+        u.worlds = $worldsStr
     
     MERGE (user)-[:CREATED]->(u)
     RETURN u.id
     """
     try:
+        # Prepara dados (Serializa listas complexas para string JSON)
+        params = item.dict()
+        params["chroniclesStr"] = json.dumps(item.chronicles)
+        params["championsStr"] = json.dumps(item.champions)
+        params["worldsStr"] = json.dumps(item.worlds)
+
         with graph.driver.session() as session:
-            session.run(cypher, item.dict())
+            session.run(cypher, params)
+        
+        # Processa o contexto de grafo (se houver)
+        if item.graphContext:
+            await process_graph_context(item.graphContext, item.id, item.userId)
+            
         return {"status": "success", "id": item.id}
     except Exception as e:
         logger.error(f"Erro ao salvar universo: {e}")
@@ -109,7 +170,8 @@ async def save_universe(item: UniverseModel):
 
 @router.post("/character")
 async def save_character(item: CharacterModel):
-    if not graph.driver: raise HTTPException(status_code=503, detail="Database not connected")
+    if not graph.driver:
+        raise HTTPException(status_code=503, detail="Database not connected")
     
     # Atualizado: Cria personagem sem vínculo com universo (Template)
     cypher = """
@@ -120,15 +182,25 @@ async def save_character(item: CharacterModel):
         c.archetype = $archetype,
         c.image = $image,
         c.stats = $stats,
-        c.createdAt = $createdAt
+        c.createdAt = $createdAt,
+        c.adventuresPlayed = $adventuresPlayed
         
     MERGE (user)-[:CREATED]->(c)
     
     RETURN c.id
     """
     try:
+        # Prepara dados (Serializa dict para string JSON)
+        params = item.dict()
+        params["stats"] = json.dumps(item.stats)
+
         with graph.driver.session() as session:
-            session.run(cypher, item.dict())
+            session.run(cypher, params)
+
+        # Processa o contexto de grafo (se houver)
+        if item.graphContext:
+            await process_graph_context(item.graphContext, "GLOBAL", item.userId)
+
         return {"status": "success", "id": item.id}
     except Exception as e:
         logger.error(f"Erro ao salvar personagem: {e}")
@@ -136,7 +208,8 @@ async def save_character(item: CharacterModel):
 
 @router.post("/adventure")
 async def save_adventure(item: AdventureModel):
-    if not graph.driver: raise HTTPException(status_code=503, detail="Database not connected")
+    if not graph.driver:
+        raise HTTPException(status_code=503, detail="Database not connected")
     
     # Atualizado: A Aventura agora é o nó que conecta o Personagem ao Universo
     cypher = """
@@ -148,7 +221,12 @@ async def save_adventure(item: AdventureModel):
     SET a.name = $name,
         a.description = $description,
         a.currentStep = $currentStep,
-        a.createdAt = $createdAt
+        a.createdAt = $createdAt,
+        a.characterName = $characterName,
+        a.universeName = $universeName,
+        a.universeGenre = $universeGenre,
+        a.lastLocation = $lastLocation,
+        a.startDate = $startDate
     
     // Conecta tudo
     MERGE (user)-[:PLAYS]->(a)
@@ -161,6 +239,11 @@ async def save_adventure(item: AdventureModel):
         with graph.driver.session() as session:
             # exclude={"messages"} pois mensagens não vão pro grafo dessa forma
             session.run(cypher, item.dict(exclude={"messages"}))
+            
+        # Processa o contexto de grafo (se houver)
+        if item.graphContext:
+            await process_graph_context(item.graphContext, item.universeId, item.userId)
+            
         return {"status": "success", "id": item.id}
     except Exception as e:
         logger.error(f"Erro ao salvar aventura: {e}")
@@ -170,7 +253,8 @@ async def save_adventure(item: AdventureModel):
 
 @router.delete("/universe/{item_id}")
 async def delete_universe(item_id: str, userId: str = Query(...)):
-    if not graph.driver: raise HTTPException(status_code=503, detail="Database not connected")
+    if not graph.driver:
+        raise HTTPException(status_code=503, detail="Database not connected")
     
     # Deleta universo e suas aventuras, mas PRESERVA os personagens (templates)
     cypher = """
@@ -190,7 +274,8 @@ async def delete_universe(item_id: str, userId: str = Query(...)):
 
 @router.delete("/character/{item_id}")
 async def delete_character(item_id: str, userId: str = Query(...)):
-    if not graph.driver: raise HTTPException(status_code=503, detail="Database not connected")
+    if not graph.driver:
+        raise HTTPException(status_code=503, detail="Database not connected")
 
     # Deleta o template. (Futuramente: avisar se há aventuras ativas usando ele)
     cypher = """
@@ -207,7 +292,8 @@ async def delete_character(item_id: str, userId: str = Query(...)):
 
 @router.delete("/adventure/{item_id}")
 async def delete_adventure(item_id: str, userId: str = Query(...)):
-    if not graph.driver: raise HTTPException(status_code=503, detail="Database not connected")
+    if not graph.driver:
+        raise HTTPException(status_code=503, detail="Database not connected")
 
     cypher = """
     MATCH (a:Adventure {id: $id})

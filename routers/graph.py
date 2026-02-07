@@ -122,3 +122,53 @@ async def query_graph_context(req: GraphEntityQuery):
     except Exception as e:
         print(f"❌ [GRAPH] Erro Cypher: {e}")
         return {"edges": []}
+
+# --- Execução Standalone (Manutenção) ---
+
+def reset_database():
+    if not driver:
+        print("❌ [GRAPH] Driver não conectado.")
+        return
+    
+    print("\n⚠️  PERIGO: Isso apagará TODOS os nós e relacionamentos do Neo4j!")
+    confirm = input("Digite 'DELETAR' para confirmar: ")
+    
+    if confirm == "DELETAR":
+        try:
+            with driver.session() as session:
+                session.run("MATCH (n) DETACH DELETE n")
+            print("✅ [GRAPH] Banco de dados limpo com sucesso (MATCH (n) DETACH DELETE n).")
+        except Exception as e:
+            print(f"❌ [GRAPH] Erro ao resetar: {e}")
+    else:
+        print("❌ Operação cancelada.")
+
+if __name__ == "__main__":
+    # Permite rodar este arquivo diretamente para manutenção
+    from dotenv import load_dotenv
+    
+    # Carrega variáveis de ambiente (assume que .env está na raiz do projeto)
+    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env'))
+    
+    # Atualiza credenciais (pois foram lidas como None no topo do script antes do load_dotenv)
+    URI = os.getenv("NEO4J_URI")
+    USER = os.getenv("NEO4J_USER")
+    PASSWORD = os.getenv("NEO4J_PASSWORD")
+    
+    init_graph_module()
+    
+    while True:
+        print("\n--- 🛠️  Menu de Manutenção Neo4j ---")
+        print("1. Resetar Banco de Dados (Apagar Tudo)")
+        print("2. Sair")
+        
+        opt = input("Escolha uma opção: ")
+        1
+        if opt == "1":
+            reset_database()
+        elif opt == "2":
+            close_graph_module()
+            print("Saindo...")
+            break
+        else:
+            print("Opção inválida.")
