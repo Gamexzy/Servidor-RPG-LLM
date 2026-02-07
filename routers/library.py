@@ -64,15 +64,15 @@ async def get_user_library(user_id: str):
         
         with graph.driver.session() as session:
             # 1. Busca Universos
-            result_uni = session.run("MATCH (u:Universe {userId: $userId}) RETURN u", userId=user_id)
+            result_uni = session.run("MATCH (user:User {userId: $userId})-[:CREATED]->(u:Universe) RETURN u", userId=user_id)
             data["universes"] = [dict(record["u"]) for record in result_uni]
             
             # 2. Busca Personagens (Agora são globais/templates)
-            result_char = session.run("MATCH (c:Character {userId: $userId}) RETURN c", userId=user_id)
+            result_char = session.run("MATCH (user:User {userId: $userId})-[:CREATED]->(c:Character) RETURN c", userId=user_id)
             data["characters"] = [dict(record["c"]) for record in result_char]
 
             # 3. Busca Aventuras
-            result_adv = session.run("MATCH (a:Adventure {userId: $userId}) RETURN a", userId=user_id)
+            result_adv = session.run("MATCH (user:User {userId: $userId})-[:PLAYS]->(a:Adventure) RETURN a", userId=user_id)
             data["adventures"] = [dict(record["a"]) for record in result_adv]
             
         return data
@@ -88,13 +88,15 @@ async def save_universe(item: UniverseModel):
     if not graph.driver: raise HTTPException(status_code=503, detail="Database not connected")
     
     cypher = """
+    MATCH (user:User {userId: $userId})
     MERGE (u:Universe {id: $id})
-    SET u.userId = $userId,
-        u.name = $name,
+    SET u.name = $name,
         u.description = $description,
         u.genre = $genre,
         u.image = $image,
         u.createdAt = $createdAt
+    
+    MERGE (user)-[:CREATED]->(u)
     RETURN u.id
     """
     try:
@@ -111,14 +113,17 @@ async def save_character(item: CharacterModel):
     
     # Atualizado: Cria personagem sem vínculo com universo (Template)
     cypher = """
+    MATCH (user:User {userId: $userId})
     MERGE (c:Character {id: $id})
-    SET c.userId = $userId,
-        c.name = $name,
+    SET c.name = $name,
         c.description = $description,
         c.archetype = $archetype,
         c.image = $image,
         c.stats = $stats,
         c.createdAt = $createdAt
+        
+    MERGE (user)-[:CREATED]->(c)
+    
     RETURN c.id
     """
     try:
@@ -135,19 +140,18 @@ async def save_adventure(item: AdventureModel):
     
     # Atualizado: A Aventura agora é o nó que conecta o Personagem ao Universo
     cypher = """
-    MERGE (a:Adventure {id: $id})
-    SET a.userId = $userId,
-        a.name = $name,
-        a.description = $description,
-        a.currentStep = $currentStep,
-        a.createdAt = $createdAt,
-        a.universeId = $universeId,
-        a.characterId = $characterId
-    
-    WITH a
+    MATCH (user:User {userId: $userId})
     MATCH (u:Universe {id: $universeId})
     MATCH (c:Character {id: $characterId})
     
+    MERGE (a:Adventure {id: $id})
+    SET a.name = $name,
+        a.description = $description,
+        a.currentStep = $currentStep,
+        a.createdAt = $createdAt
+    
+    // Conecta tudo
+    MERGE (user)-[:PLAYS]->(a)
     MERGE (a)-[:HAPPENS_IN]->(u)
     MERGE (a)-[:USES_TEMPLATE]->(c)
     
@@ -170,8 +174,8 @@ async def delete_universe(item_id: str, userId: str = Query(...)):
     
     # Deleta universo e suas aventuras, mas PRESERVA os personagens (templates)
     cypher = """
-    MATCH (u:Universe {id: $id, userId: $userId})
-    OPTIONAL MATCH (a:Adventure {universeId: $id, userId: $userId})
+    MATCH (user:User {userId: $userId})-[:CREATED]->(u:Universe {id: $id})
+    OPTIONAL MATCH (a:Adventure)-[:HAPPENS_IN]->(u)
     DETACH DELETE u, a
     """
     try:
@@ -190,13 +194,13 @@ async def delete_character(item_id: str, userId: str = Query(...)):
 
     # Deleta o template. (Futuramente: avisar se há aventuras ativas usando ele)
     cypher = """
-    MATCH (c:Character {id: $id, userId: $userId})
-    DETACH DELETE c
+    MATCH (u:User {userId: $userId})-[r:CREATED]->(c:Character {id: $id})
+    DELETE r
     """
     try:
         with graph.driver.session() as session:
             session.run(cypher, id=item_id, userId=userId)
-        return {"status": "deleted", "id": item_id}
+        return {"status": "archived", "id": item_id}
     except Exception as e:
         logger.error(f"Erro ao deletar personagem: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -206,7 +210,10 @@ async def delete_adventure(item_id: str, userId: str = Query(...)):
     if not graph.driver: raise HTTPException(status_code=503, detail="Database not connected")
 
     cypher = """
-    MATCH (a:Adventure {id: $id, userId: $userId})
+    MATCH (a:Adventure {id: $id})
+    WHERE EXISTS {
+        MATCH (user:User {userId: $userId})-[:PLAYS]->(a)
+    }
     DETACH DELETE a
     """
     try:

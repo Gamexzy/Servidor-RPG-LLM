@@ -60,9 +60,14 @@ async def internal_ingest_edges(edges: List[Dict[str, Any]], universe_id: str, u
     # Query Cypher otimizada para Merge (Upsert) em lote
     # Requer plugin APOC instalado no Neo4j (apoc.create.relationship)
     cypher = """
+    MATCH (u:Universe {id: $universeId})
     UNWIND $edges AS edge
     MERGE (s:Entity {name: edge.subject, universeId: $universeId, userId: $userId})
     MERGE (o:Entity {name: edge.object, universeId: $universeId, userId: $userId})
+    
+    MERGE (u)-[:CONTAINS]->(s)
+    MERGE (u)-[:CONTAINS]->(o)
+    
     WITH s, o, edge
     CALL apoc.create.relationship(s, edge.relation, edge.properties, o) YIELD rel
     RETURN count(rel) as rel_count

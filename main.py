@@ -1,6 +1,5 @@
 # [2025-08-01] Sempre coloque os imports no topo do script.
 import uvicorn
-import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -57,4 +56,4 @@ app.include_router(graph.router)    # /query (Graph)
 app.include_router(state.router)    # /state (Legacy/Debug)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
